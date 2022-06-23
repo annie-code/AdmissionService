@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: azuredfcontainerreg.azurecr.io
+        username: ${{ secrets.acr_azuredfcontainerreg_username }}
+        password: ${{ secrets.acr_azuredfcontainerreg_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/StudentAdmissionService" -f  "StudentAdmissionService/Dockerfile" -t azuredfcontainerreg.azurecr.io/demodfakscluster:${{ github.sha }} --label dockerfile-path=StudentAdmissionService/Dockerfile
+        docker push azuredfcontainerreg.azurecr.io/demodfakscluster:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_demodfakscluster_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep demodfakscluster947a | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace demodfakscluster947a`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: demodfakscluster947a
+        container-registry-url: azuredfcontainerreg.azurecr.io
+        container-registry-username: ${{ secrets.acr_azuredfcontainerreg_username }}
+        container-registry-password: ${{ secrets.acr_azuredfcontainerreg_password }}
+        secret-name: demodfakscludockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: demodfakscluster947a
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          azuredfcontainerreg.azurecr.io/demodfakscluster:${{ github.sha }}
+        imagepullsecrets: |
+          demodfakscludockerauth
